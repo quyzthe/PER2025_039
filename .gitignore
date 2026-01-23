@@ -3,3 +3,5 @@
 /data/DAVISDATA/*.bag
 data/DAVISDATA/*.bag
 /ucf_test dataset/
+/tonic_tutorial/*.ipynb
+tonic_tutorial/*.ipynb

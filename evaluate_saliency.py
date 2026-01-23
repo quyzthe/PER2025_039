@@ -1,97 +1,75 @@
-import os
-import timeit
-import cv2
 import numpy as np
-from skimage.color import gray2rgb, rgb2lab
-from skimage.io import imread, imsave
-from skimage.transform import rescale
+from copy import copy
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, auc
+import math
+from PIL import Image
 
-# =========================
-# Metric functions
-# =========================
-def auc_judd(saliency, fixation):
-    S = saliency.flatten()
-    F = fixation.flatten().astype(bool)
-    
-    Sth = S[F]  # values at fixation locations
-    Nfix = len(Sth)
+##############################  saliency metrics  #######################################
+
+def AUC_Judd(saliencyMap, fixationMap, jitter=True, toPlot=False):
+
+    if not fixationMap.any():
+        print('Error: no fixationMap')
+        score = float('nan')
+        return score
+
+    new_size = np.shape(fixationMap)
+    if not np.shape(saliencyMap) == np.shape(fixationMap):
+
+        new_size = np.shape(fixationMap)
+        np.array(Image.fromarray(saliencyMap).resize((new_size[1], new_size[0])))
+
+    if jitter:
+        saliencyMap = saliencyMap + np.random.random(np.shape(saliencyMap)) / 10 ** 7
+
+    saliencyMap = (saliencyMap - saliencyMap.min()) \
+                  / (saliencyMap.max() - saliencyMap.min())
+
+    if np.isnan(saliencyMap).all():
+        print('NaN saliencyMap')
+        score = float('nan')
+        return score
+
+    S = saliencyMap.flatten()
+    F = fixationMap.flatten()
+
+    Sth = S[F > 0]
+    Nfixations = len(Sth)
     Npixels = len(S)
-    
-    all_thresh = np.sort(Sth)[::-1]  # descending
-    tp = [0]
-    fp = [0]
-    
-    for thresh in all_thresh:
-        tp.append(np.sum(Sth >= thresh)/Nfix)
-        fp.append(np.sum(S >= thresh) - np.sum(Sth >= thresh))  # non-fixation above thresh
-    fp = np.array(fp)/(Npixels - Nfix)
-    
-    tp.append(1)
-    fp = np.append(fp,1)
-    
-    return np.trapz(tp, fp)
+
+    allthreshes = sorted(Sth, reverse=True)
+    tp = np.zeros((Nfixations + 2))
+    fp = np.zeros((Nfixations + 2))
+    tp[0], tp[-1] = 0, 1
+    fp[0], fp[-1] = 0, 1
+
+    for i in range(Nfixations):
+        thresh = allthreshes[i]
+        aboveth = (S >= thresh).sum() 
+        tp[i + 1] = float(i + 1) / Nfixations 
+
+        fp[i + 1] = float(aboveth - i) / (Npixels - Nfixations)  
 
 
-def auc_borji(saliency, fixation, Nsplits=100):
-    S = saliency.flatten()
-    F = fixation.flatten().astype(bool)
-    
-    Sth = S[F]
-    Nfix = len(Sth)
-    Npixels = len(S)
-    
-    aucs = []
-    for _ in range(Nsplits):
-        rand_inds = np.random.choice(Npixels, Nfix, replace=False)
-        curfix = S[rand_inds]
-        
-        all_thresh = np.linspace(0, max(np.max(Sth), np.max(curfix)), 100)
-        tp = [0]
-        fp = [0]
-        
-        for t in all_thresh:
-            tp.append(np.sum(Sth >= t)/Nfix)
-            fp.append(np.sum(curfix >= t)/Nfix)
-        
-        tp.append(1)
-        fp.append(1)
-        
-        aucs.append(np.trapz(tp, fp))
-    return np.mean(aucs)
+    score = np.trapz(tp, x=fp)
+    allthreshes = np.insert(allthreshes, 0, 0)
+    allthreshes = np.append(allthreshes, 1)
 
+    if toPlot:
+        import matplotlib.pyplot as plt
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 2, 1)
+        ax.matshow(saliencyMap, cmap='gray')
+        ax.set_title('SaliencyMap with fixations to be predicted')
+        [y, x] = np.nonzero(fixationMap)
+        s = np.shape(saliencyMap)
+        plt.axis((-.5, s[1] - .5, s[0] - .5, -.5))
+        plt.plot(x, y, 'ro')
 
-def nss(saliency, fixation):
-    S = saliency.astype(np.float32)
-    S = (S - S.mean()) / (S.std() + 1e-8)
-    return S[fixation.astype(bool)].mean()
+        ax = fig.add_subplot(1, 2, 2)
+        plt.plot(fp, tp, '.b-')
+        ax.set_title('Area under ROC curve: ' + str(score))
+        plt.axis((0, 1, 0, 1))
+        plt.show()
 
-
-def kl_div(saliency, fixation):
-    S = saliency.astype(np.float32)
-    F = fixation.astype(np.float32)
-    
-    S = S / (S.sum() + 1e-8)
-    F = F / (F.sum() + 1e-8)
-    
-    return np.sum(F * np.log((F + 1e-8)/(S + 1e-8)))
-
-def cc(saliency, fixation):
-    S = saliency.astype(np.float32)
-    F = fixation.astype(np.float32)
-    
-    S = (S - S.mean()) / (S.std() + 1e-8)
-    F = (F - F.mean()) / (F.std() + 1e-8)
-    
-    return np.sum(S*F) / (np.sqrt(np.sum(S*S)*np.sum(F*F)) + 1e-8)
-
-
-def sim(saliency, fixation):
-    S = saliency.astype(np.float32)
-    F = fixation.astype(np.float32)
-    
-    S = S / (S.sum() + 1e-8)
-    F = F / (F.sum() + 1e-8)
-    
-    return np.sum(np.minimum(S, F))
+    return score
