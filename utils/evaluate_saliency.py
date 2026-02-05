@@ -7,21 +7,36 @@ from PIL import Image
 ##############################  saliency metrics  #######################################
 
 def AUC_Judd(saliencyMap, fixationMap, jitter=True, toPlot=False):
+    # saliencyMap is the saliency map
+    # fixationMap is the human fixation map (binary matrix)
+    # jitter=True will add tiny non-zero random constant to all map locations to ensure
+    # 		ROC can be calculated robustly (to avoid uniform region)
+    # if toPlot=True, displays ROC curve
 
+    # If there are no fixations to predict, return NaN
     if not fixationMap.any():
         print('Error: no fixationMap')
         score = float('nan')
         return score
 
+    # make the saliencyMap the size of the image of fixationMap
     new_size = np.shape(fixationMap)
     if not np.shape(saliencyMap) == np.shape(fixationMap):
-
+        #from scipy.misc import imresize
         new_size = np.shape(fixationMap)
         np.array(Image.fromarray(saliencyMap).resize((new_size[1], new_size[0])))
 
+        #saliencyMap = imresize(saliencyMap, np.shape(fixationMap))
+
+    # jitter saliency maps that come from saliency models that have a lot of zero values.
+    # If the saliency map is made with a Gaussian then it does not need to be jittered as
+    # the values are varied and there is not a large patch of the same value. In fact
+    # jittering breaks the ordering in the small values!
     if jitter:
+        # jitter the saliency map slightly to distrupt ties of the same numbers
         saliencyMap = saliencyMap + np.random.random(np.shape(saliencyMap)) / 10 ** 7
 
+    # normalize saliency map
     saliencyMap = (saliencyMap - saliencyMap.min()) \
                   / (saliencyMap.max() - saliencyMap.min())
 
@@ -33,11 +48,11 @@ def AUC_Judd(saliencyMap, fixationMap, jitter=True, toPlot=False):
     S = saliencyMap.flatten()
     F = fixationMap.flatten()
 
-    Sth = S[F > 0]
+    Sth = S[F > 0]  # sal map values at fixation locations
     Nfixations = len(Sth)
     Npixels = len(S)
 
-    allthreshes = sorted(Sth, reverse=True)
+    allthreshes = sorted(Sth, reverse=True)  # sort sal map values, to sweep through values
     tp = np.zeros((Nfixations + 2))
     fp = np.zeros((Nfixations + 2))
     tp[0], tp[-1] = 0, 1
@@ -45,11 +60,11 @@ def AUC_Judd(saliencyMap, fixationMap, jitter=True, toPlot=False):
 
     for i in range(Nfixations):
         thresh = allthreshes[i]
-        aboveth = (S >= thresh).sum() 
-        tp[i + 1] = float(i + 1) / Nfixations 
-
-        fp[i + 1] = float(aboveth - i) / (Npixels - Nfixations)  
-
+        aboveth = (S >= thresh).sum()  # total number of sal map values above threshold
+        tp[i + 1] = float(i + 1) / Nfixations  # ratio sal map values at fixation locations
+        # above threshold
+        fp[i + 1] = float(aboveth - i) / (Npixels - Nfixations)  # ratio other sal map values
+        # above threshold
 
     score = np.trapz(tp, x=fp)
     allthreshes = np.insert(allthreshes, 0, 0)
@@ -73,3 +88,136 @@ def AUC_Judd(saliencyMap, fixationMap, jitter=True, toPlot=False):
         plt.show()
 
     return score
+
+
+######################################################################################
+
+''' created: Zoya Bylinskii, Aug 2014
+    python-version by: Dario Zanca, Jan 2017
+
+This finds the KL-divergence between two different saliency maps when viewed as 
+distributions: it is a non-symmetric measure of the information lost when saliencyMap 
+is used to estimate fixationMap. '''
+
+
+def KLdiv(saliencyMap, fixationMap):
+    # saliencyMap is the saliency map
+    # fixationMap is the human fixation map
+
+    # convert to float
+    map1 = saliencyMap.astype(float)
+    map2 = fixationMap.astype(float)
+
+    # make sure maps have the same shape
+    #from scipy.misc import imresize
+
+    new_size = np.shape(map2)
+    np.array(Image.fromarray(map1).resize((new_size[1], new_size[0])))
+
+    #map1 = imresize(map1, np.shape(map2))
+
+    # make sure map1 and map2 sum to 1
+    if map1.any():
+        map1 = map1 / map1.sum()
+    if map2.any():
+        map2 = map2 / map2.sum()
+
+    # compute KL-divergence
+    eps = 10 ** -12
+    score = map2 * np.log(eps + map2 / (map1 + eps))
+
+    return score.sum()
+
+
+######################################################################################
+
+''' created: Zoya Bylinskii, Aug 2014
+    python-version by: Dario Zanca, Jan 2017
+
+This finds the normalized scanpath saliency (NSS) between two different saliency maps. 
+NSS is the average of the response values at human eye positions in a model saliency 
+map that has been normalized to have zero mean and unit standard deviation. '''
+
+
+def NSS(saliencyMap, fixationMap):
+    # saliencyMap is the saliency map
+    # fixationMap is the human fixation map (binary matrix)
+
+    # If there are no fixations to predict, return NaN
+    if not fixationMap.any():
+        print('Error: no fixationMap')
+        score = np.nan
+        return score
+
+    # make sure maps have the same shape
+    #from scipy.misc import imresize
+
+    new_size = np.shape(fixationMap)
+    map1 = np.array(Image.fromarray(saliencyMap).resize((new_size[1], new_size[0])))
+
+    #map1 = imresize(saliencyMap, np.shape(fixationMap))
+    if not map1.max() == 0:
+        map1 = map1.astype(float) / map1.max()
+
+    # normalize saliency map
+    if not map1.std(ddof=1) == 0:
+        map1 = (map1 - map1.mean()) / map1.std(ddof=1)
+
+    # mean value at fixation locations
+    score = map1[fixationMap.astype(bool)].mean()
+
+    return score
+######################## created by salgan - added by memoona ##############################
+
+def CC(s_map,gt):
+
+    #gt is an empirical/continuous saliency map
+    # make sure maps have the same shape
+    s_map = s_map.astype(float)
+    gt = gt.astype(float)
+
+    #from scipy.misc import imresize
+
+    new_size = np.shape(gt)
+    np.array(Image.fromarray(s_map).resize((new_size[1], new_size[0])))
+
+    #s_map = imresize(s_map, np.shape(gt))
+    gt_norm = (gt - np.mean(gt)) / np.std(gt)
+
+    #because some saliency maps had no fixation so it was empty and didnt require normalization
+    if not s_map.max() == 0:
+        s_map_norm = (s_map - np.mean(s_map))/np.std(s_map)
+        r = (s_map_norm * gt_norm).sum() / math.sqrt((s_map_norm * s_map_norm).sum() * (gt_norm * gt_norm).sum());
+    else:
+        r=0
+
+
+    #r = np.corrcoef(s_map_norm, gt_norm)
+    return r
+
+############### created by salgan- added by memoona
+
+def sim(s_map,gt):
+# here gt is not discretized nor normalized
+    s_map = s_map.astype(float)
+    gt = gt.astype(float)
+
+    #from scipy.misc import imresize
+
+    new_size = np.shape(gt)
+    np.array(Image.fromarray(s_map).resize((new_size[1], new_size[0])))
+
+    #s_map = imresize(s_map, np.shape(gt))
+
+    gt = (gt - np.min(gt)) / ((np.max(gt) - np.min(gt)) * 1.0)
+    if not s_map.max() == 0:
+        s_map=(s_map - np.min(s_map)) / ((np.max(s_map) - np.min(s_map)) * 1.0)
+        s_map = s_map/(np.sum(s_map)*1.0)
+        gt = gt/(np.sum(gt)*1.0)
+        x,y = np.where(gt>0)
+        sim = 0.0
+        for i in zip(x,y):
+            sim = sim + min(gt[i[0],i[1]],s_map[i[0],i[1]])
+    else:
+        sim =0
+    return sim
