@@ -498,4 +498,3 @@ def compute_bms_saliency_v2(img, enable_cs=True, enable_fill=True):
 
     return attn_map_uint8
 
-
