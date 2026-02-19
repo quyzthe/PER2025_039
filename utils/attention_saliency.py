@@ -16,75 +16,75 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 # -----------------------------
 # Attention Module (improved)
 # -----------------------------
-class AttentionModuleLevel(nn.Module):
-    def __init__(self, num_ori=8):
-        super().__init__()
-        self.num_ori = num_ori
-        self.conv1 = nn.Conv2d(2, num_ori, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(num_ori, num_ori*2, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(num_ori*2, 1, kernel_size=3, padding=1)
-        self.act = nn.ReLU()
-
-    def forward(self, inp):
-        x = self.act(self.conv1(inp))
-        x = self.act(self.conv2(x))
-        out = self.conv3(x)
-        return out
-
-class AttentionModule(nn.Module):
-    def __init__(self, pyramid_levels=3, num_ori=8):
-        super().__init__()
-        self.levels = nn.ModuleList([AttentionModuleLevel(num_ori=num_ori) for _ in range(pyramid_levels)])
-
-    def forward(self, inp):
-        h, w = inp.shape[-2:]
-        out = 0
-        for i, level in enumerate(self.levels):
-            scale = 1 / (2**i)
-            new_h, new_w = max(1,int(h*scale)), max(1,int(w*scale))
-            inp_small = F.interpolate(inp, size=(new_h,new_w), mode='bilinear', align_corners=False)
-            level_out = level(inp_small)
-            level_out_up = F.interpolate(level_out, size=(h,w), mode='bilinear', align_corners=False)
-            out += level_out_up
-        out = out / (out.max() + 1e-8)
-        out_np = out.squeeze().cpu().detach().numpy()
-        out_np = cv2.GaussianBlur(out_np, (5,5), 2)
-        return out_np
-    
-
 # class AttentionModuleLevel(nn.Module):
-#     def __init__(self, num_ori=4):
+#     def __init__(self, num_ori=8):
 #         super().__init__()
 #         self.num_ori = num_ori
-
-#         self.lif = nn.Identity()
+#         self.conv1 = nn.Conv2d(2, num_ori, kernel_size=3, padding=1)
+#         self.conv2 = nn.Conv2d(num_ori, num_ori*2, kernel_size=3, padding=1)
+#         self.conv3 = nn.Conv2d(num_ori*2, 1, kernel_size=3, padding=1)
+#         self.act = nn.ReLU()
 
 #     def forward(self, inp):
-
-#         x = inp[:,0:1]
-#         y = inp[:,1:2]
-#         out = (x.abs() + y.abs()) / 2  # [B,1,H,W]
+#         x = self.act(self.conv1(inp))
+#         x = self.act(self.conv2(x))
+#         out = self.conv3(x)
 #         return out
 
 # class AttentionModule(nn.Module):
-#     def __init__(self, pyramid_levels=1, num_ori=4):
+#     def __init__(self, pyramid_levels=3, num_ori=8):
 #         super().__init__()
 #         self.levels = nn.ModuleList([AttentionModuleLevel(num_ori=num_ori) for _ in range(pyramid_levels)])
 
 #     def forward(self, inp):
-
 #         h, w = inp.shape[-2:]
-#         scale = 128 / max(h, w)
-#         new_h, new_w = max(1,int(h*scale)), max(1,int(w*scale))
-#         inp_small = F.interpolate(inp, size=(new_h,new_w), mode='bilinear', align_corners=False)
-
 #         out = 0
-#         for level in self.levels:
+#         for i, level in enumerate(self.levels):
+#             scale = 1 / (2**i)
+#             new_h, new_w = max(1,int(h*scale)), max(1,int(w*scale))
+#             inp_small = F.interpolate(inp, size=(new_h,new_w), mode='bilinear', align_corners=False)
 #             level_out = level(inp_small)
-#             out += F.interpolate(level_out, size=(h,w), mode='bilinear', align_corners=False)
-
+#             level_out_up = F.interpolate(level_out, size=(h,w), mode='bilinear', align_corners=False)
+#             out += level_out_up
 #         out = out / (out.max() + 1e-8)
-#         return out.squeeze().cpu().detach().numpy()
+#         out_np = out.squeeze().cpu().detach().numpy()
+#         out_np = cv2.GaussianBlur(out_np, (5,5), 2)
+#         return out_np
+    
+
+class AttentionModuleLevel(nn.Module):
+    def __init__(self, num_ori=4):
+        super().__init__()
+        self.num_ori = num_ori
+
+        self.lif = nn.Identity()
+
+    def forward(self, inp):
+
+        x = inp[:,0:1]
+        y = inp[:,1:2]
+        out = (x.abs() + y.abs()) / 2  # [B,1,H,W]
+        return out
+
+class AttentionModule(nn.Module):
+    def __init__(self, pyramid_levels=1, num_ori=4):
+        super().__init__()
+        self.levels = nn.ModuleList([AttentionModuleLevel(num_ori=num_ori) for _ in range(pyramid_levels)])
+
+    def forward(self, inp):
+
+        h, w = inp.shape[-2:]
+        scale = 128 / max(h, w)
+        new_h, new_w = max(1,int(h*scale)), max(1,int(w*scale))
+        inp_small = F.interpolate(inp, size=(new_h,new_w), mode='bilinear', align_corners=False)
+
+        out = 0
+        for level in self.levels:
+            level_out = level(inp_small)
+            out += F.interpolate(level_out, size=(h,w), mode='bilinear', align_corners=False)
+
+        out = out / (out.max() + 1e-8)
+        return out.squeeze().cpu().detach().numpy()
 
 # Global attention net
 attention_net = AttentionModule().to(device)
@@ -124,7 +124,8 @@ def spectral_residual_saliency_nn(img, width=128):
     attn_map_small = attention_net(grad_tensor)
     attn_map = cv2.resize(attn_map_small, (img.shape[1], img.shape[0]))
     img_weighted = (img.astype(np.float32) * attn_map[..., np.newaxis]).astype(np.uint8)
-    return spectral_residual_saliency(img_weighted, width=width)
+    # return spectral_residual_saliency(img_weighted, width=width)
+    return img_weighted
 
 # -----------------------------
 # BMS Saliency
