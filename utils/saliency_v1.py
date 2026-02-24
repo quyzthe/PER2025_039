@@ -101,3 +101,14 @@ def compute_bms_saliency(img):
 
     return attn_map.astype(np.uint8)
 
+def load_rgb_image(img_path, max_dim=320):
+    img = imread(img_path)
+    if img.ndim == 2:
+        img = gray2rgb(img)
+    elif img.shape[2] == 4:
+        img = img[:,:,:3]
+    upper_dim = max(img.shape[:2])
+    if upper_dim > max_dim:
+        img = rescale(img, max_dim/float(upper_dim), order=3, anti_aliasing=True, channel_axis=-1)
+        img = (img * 255).astype(np.uint8)
+    return img

@@ -124,8 +124,7 @@ def spectral_residual_saliency_nn(img, width=128):
     attn_map_small = attention_net(grad_tensor)
     attn_map = cv2.resize(attn_map_small, (img.shape[1], img.shape[0]))
     img_weighted = (img.astype(np.float32) * attn_map[..., np.newaxis]).astype(np.uint8)
-    # return spectral_residual_saliency(img_weighted, width=width)
-    return img_weighted
+    return spectral_residual_saliency(img_weighted, width=width)
 
 # -----------------------------
 # BMS Saliency
